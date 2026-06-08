@@ -11,8 +11,8 @@ while [ -h "$SRC" ]; do
   [ "${SRC#/}" = "$SRC" ] && SRC="$D/$SRC"
 done
 HERE="$(cd -P "$(dirname "$SRC")" && pwd)"
-# shellcheck source=../lib/sizer.sh
-source "$HERE/../lib/sizer.sh"
+# shellcheck source=./sizer.sh
+source "$HERE/sizer.sh"
 
 QUIET=0; FILE=""
 while [ $# -gt 0 ]; do

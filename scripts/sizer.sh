@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # sizer.sh — shared library: config loading, markdown section extraction, scoring.
-# Sourced by bin/score-story and bin/scan-backlog. Dependency-free (bash + awk/grep/sed).
+# Sourced by scripts/score-story and scripts/scan-backlog. Dependency-free (bash + awk/grep/sed).
 
-SIZER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SIZER_ROOT="$(cd "$SIZER_LIB_DIR/.." && pwd)"
+SIZER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # scripts/
+SIZER_ROOT="$(cd "$SIZER_LIB_DIR/.." && pwd)"                   # skill root (holds config/)
 
 # Load defaults, then optional override (--config / env / CWD .story-sizer.conf).
 sizer_load_config() {

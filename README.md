@@ -14,18 +14,37 @@ Dependency-free bash (`bash` + `awk`/`grep`/`sed`). Works on any markdown story 
 `## Acceptance Criteria` section. Everything — headings, file-path regex, keyword lists,
 thresholds — is configurable per repo.
 
+## One skill, three harnesses
+
+The whole repo **is** an [Agent Skill](https://agent-skills.org) — `SKILL.md` at the root with
+`scripts/ references/ config/ templates/` beside it. That standard is shared by Claude Code, pi,
+and Codex, so the same skill installs into all three (each just looks in a different dir and
+follows the symlink):
+
+| Harness | User skills dir |
+|---|---|
+| Claude Code | `~/.claude/skills/` |
+| pi          | `~/.pi/agent/skills/` |
+| Codex       | `~/.agents/skills/` |
+
 ## Install
 
 ```sh
 git clone <repo> ~/projects/story-sizer
 cd ~/projects/story-sizer
-./install.sh          # symlinks the Claude Code skill + bin commands
+./install.sh                 # auto-detect: install into every harness present
+./install.sh --claude --pi   # or pick harnesses explicitly
+./install.sh --all --bin     # all three + put the CLIs on ~/.local/bin
 ```
 
-`install.sh` links `skill/story-sizer` into `~/.claude/skills/` (so the **story-sizer** skill
-becomes available to Claude Code) and `score-story` / `scan-backlog` into `~/.local/bin`.
+`install.sh` symlinks the repo into each selected harness's skills dir. With no flags it installs
+into whichever of `~/.claude` / `~/.pi` / `~/.agents`(or `~/.codex`) exist and skips the rest.
+`--bin` also links `score-story` / `scan-backlog` into `~/.local/bin` for CI / pre-commit use.
 
 ## Use
+
+Inside an agent, just ask ("size this story", "scan the backlog"). Direct CLI use (after
+`--bin`, or via `scripts/`):
 
 ```sh
 score-story path/to/story.md            # table + verdict; exit 0=READY 1=SPLIT
@@ -62,13 +81,13 @@ AC_ITEM_RE='^[-*][[:space:]]'                                # bullet ACs instea
 ## Layout
 
 ```
-bin/score-story      bin/scan-backlog     # CLIs
-lib/sizer.sh                              # shared: config + section parsing + scoring
+SKILL.md                                  # skill entry (name + description + how-to)
+scripts/score-story  scripts/scan-backlog # CLIs
+scripts/sizer.sh                          # shared: config + section parsing + scoring
 config/default.conf                       # all tunables
-docs/story-sizing-rubric.md               # gates, tells, split pattern
+references/story-sizing-rubric.md         # gates, tells, split pattern
 templates/overrun-log.md                  # empirical-calibration loop
-skill/story-sizer/SKILL.md                # Claude Code skill entry
-install.sh
+install.sh                                # multi-harness installer
 ```
 
 ## Calibration caveat (read this)
