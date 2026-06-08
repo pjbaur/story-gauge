@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# scan-backlog — risk dashboard across every story file in a directory (recursive).
+# Usage: scan-backlog [dir] [--config FILE]   (default dir: .)
+set -euo pipefail
+
+# Resolve real script dir even when invoked through a symlink (install.sh links to PATH).
+SRC="${BASH_SOURCE[0]}"
+while [ -h "$SRC" ]; do
+  D="$(cd -P "$(dirname "$SRC")" && pwd)"; SRC="$(readlink "$SRC")"
+  [ "${SRC#/}" = "$SRC" ] && SRC="$D/$SRC"
+done
+HERE="$(cd -P "$(dirname "$SRC")" && pwd)"
+# shellcheck source=../lib/sizer.sh
+source "$HERE/../lib/sizer.sh"
+
+DIR="."
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --config) shift; export STORY_SIZER_CONFIG="$1" ;;
+    -h|--help) echo "usage: scan-backlog [dir] [--config FILE]"; exit 0 ;;
+    *) DIR="$1" ;;
+  esac
+  shift
+done
+[ -d "$DIR" ] || { echo "no such dir: $DIR" >&2; exit 2; }
+
+sizer_load_config
+
+printf '%-50s %4s %5s %4s %5s %5s  %s\n' "story" "ACs" "files" "SM~" "mark" "race" "risk"
+printf '%s\n' "--------------------------------------------------------------------------------------"
+
+OK=0; WATCH=0; HIGH=0
+while IFS= read -r f; do
+  sizer_is_story "$f" || continue
+  sizer_score_file "$f"
+  risk=$(sizer_risk "$TRIP"); tag="$risk"; [ "$TRIP" -ge 2 ] && tag="HIGH*"
+  case "$risk" in OK) OK=$((OK+1));; WATCH) WATCH=$((WATCH+1));; HIGH) HIGH=$((HIGH+1));; esac
+  name="$(basename "${f%.md}")"
+  printf '%-50.50s %4s %5s %4s %5s %5s  %s\n' "$name" "$ACS" "$FILES" "$SM" "$MARK" "$RACE" "$tag"
+done < <(find "$DIR" -type f -name '*.md' | sort)
+
+printf '%s\n' "--------------------------------------------------------------------------------------"
+printf 'totals: %s OK  |  %s WATCH  |  %s HIGH   (* = recommend split)\n' "$OK" "$WATCH" "$HIGH"
+echo "SM~ = keyword estimate, verify by hand. Gates: ACs<=$MAX_ACS files<=$MAX_FILES SM<=$MAX_SM mark<=$MAX_MARKERS race<=$MAX_RACE"

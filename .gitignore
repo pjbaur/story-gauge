@@ -1,0 +1,7 @@
+# symlinks created by install.sh inside the skill dir
+/skill/story-sizer/bin
+/skill/story-sizer/lib
+/skill/story-sizer/config
+/skill/story-sizer/docs
+/skill/story-sizer/templates
+.DS_Store
