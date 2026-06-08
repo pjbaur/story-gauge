@@ -30,7 +30,7 @@ while [ $# -gt 0 ]; do
     --config)
       shift
       [ $# -gt 0 ] || { usage; exit 2; }
-      export STORY_SIZER_CONFIG="$1"
+      export STORY_GAUGE_CONFIG="$1"
       ;;
     -h|--help) sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)

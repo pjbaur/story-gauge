@@ -1,4 +1,4 @@
-# story-sizer
+# Story Gauge
 
 Catch user-stories / specs that are too big for an implementing agent (human or LLM) to finish
 without running out of context — the failure mode where a story ships with **unmet acceptance
@@ -30,8 +30,8 @@ follows the symlink):
 ## Install
 
 ```sh
-git clone <repo> ~/projects/story-sizer
-cd ~/projects/story-sizer
+git clone <repo> ~/projects/story-gauge
+cd ~/projects/story-gauge
 ./install.sh                 # auto-detect: install into every harness present
 ./install.sh --claude --pi   # or pick harnesses explicitly
 ./install.sh --all --bin     # all three + put the CLIs on ~/.local/bin
@@ -73,7 +73,7 @@ VERDICT: SPLIT   (5 gates tripped - HIGH)
 
 ## Configure per repo
 
-Drop a `.story-sizer.conf` in the repo (or pass `--config FILE`). Override only the keys you
+Drop a `.story-gauge.conf` in the repo (or pass `--config FILE`). Override only the keys you
 change; all keys live in [`config/default.conf`](config/default.conf). Common ones:
 
 ```sh

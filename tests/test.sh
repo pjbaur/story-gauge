@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TMP="$(mktemp -d /tmp/story-sizer-tests.XXXXXX)"
+TMP="$(mktemp -d /tmp/story-gauge-tests.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 
 PASS=0

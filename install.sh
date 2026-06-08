@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — install story-sizer as an Agent Skill for one or more agent harnesses,
+# install.sh — install Story Gauge as an Agent Skill for one or more agent harnesses,
 # and (optionally) put its CLIs on PATH.
 #
 # The whole repo IS the skill: SKILL.md at root, with scripts/ references/ config/
@@ -8,9 +8,9 @@
 #
 # Per-agent flags (opt-in). With NO flags, every harness whose home dir exists is
 # auto-detected and installed; missing ones are skipped with a note.
-#   --claude     ~/.claude/skills/story-sizer
-#   --pi         ~/.pi/agent/skills/story-sizer
-#   --codex      ~/.agents/skills/story-sizer
+#   --claude     ~/.claude/skills/story-gauge
+#   --pi         ~/.pi/agent/skills/story-gauge
+#   --codex      ~/.agents/skills/story-gauge
 #   --all        force all three regardless of detection
 #   --bin        also link scripts/{score-story,scan-backlog} into ~/.local/bin
 #   --skills-dir DIR   override the target dir for the NEXT --<agent> flag
@@ -18,7 +18,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NAME="story-sizer"
+NAME="story-gauge"
 BIN_DIR="${HOME}/.local/bin"
 
 # default user-level skills dirs per harness

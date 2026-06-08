@@ -28,7 +28,7 @@ while [ $# -gt 0 ]; do
     --config)
       shift
       [ $# -gt 0 ] || { usage; exit 2; }
-      export STORY_SIZER_CONFIG="$1"
+      export STORY_GAUGE_CONFIG="$1"
       ;;
     -h|--help) usage; exit 0 ;;
     *) DIR="$1" ;;

@@ -19,7 +19,7 @@ ACs and burns a review cycle.
 | 4 | `CRITICAL` / `Do NOT` / `IMPORTANT`… markers | **≤ 3** | marker hits in Dev Notes + ACs |
 | 5 | Race / ordering / lifecycle invariant prose | **0** | microtask/EPIPE/"stay alive"/"deferred until"… |
 
-All thresholds are config (`config/default.conf` or a per-project `.story-sizer.conf`).
+All thresholds are config (`config/default.conf` or a per-project `.story-gauge.conf`).
 
 ---
 

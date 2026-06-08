@@ -71,12 +71,12 @@ sizer_validate_config() {
   done
 }
 
-# Load defaults, then optional override (--config / env / CWD .story-sizer.conf).
+# Load defaults, then optional override (--config / env / CWD .story-gauge.conf).
 sizer_load_config() {
   sizer_apply_config_file "$SIZER_ROOT/config/default.conf" || return 2
-  local override="${STORY_SIZER_CONFIG:-}"
-  if [ -z "$override" ] && [ -f "$PWD/.story-sizer.conf" ]; then
-    override="$PWD/.story-sizer.conf"
+  local override="${STORY_GAUGE_CONFIG:-}"
+  if [ -z "$override" ] && [ -f "$PWD/.story-gauge.conf" ]; then
+    override="$PWD/.story-gauge.conf"
   fi
   if [ -n "$override" ]; then
     sizer_apply_config_file "$override" || return 2

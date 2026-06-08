@@ -1,9 +1,9 @@
 ---
-name: story-sizer
+name: story-gauge
 description: Score a markdown user-story / spec / ticket for oversize risk before an agent implements it, and recommend how to split it. Use when the user asks to "size a story", "is this story too big", "check story sizing", "scan the backlog for risk", "will this overrun context", or "how should I split this story". Works on any markdown story with an Acceptance Criteria section; configurable per repo.
 ---
 
-# story-sizer
+# Story Gauge
 
 Catch stories too large for an implementer (human or LLM) to finish without running out of
 context — the failure mode where a story ships with unmet acceptance criteria. Gates a story on
@@ -35,7 +35,7 @@ scripts/scan-backlog path/to/stories/
 ```
 
 Per-repo overrides (heading levels/text, file-path regex, keyword lists, thresholds): drop a
-`.story-sizer.conf` in the working dir, or pass `--config FILE`. Only override the keys you change;
+`.story-gauge.conf` in the working dir, or pass `--config FILE`. Only override the keys you change;
 see `config/default.conf` for every key. Config files accept whitelisted `KEY=value` settings only;
 they are parsed, not shell-sourced.
 
