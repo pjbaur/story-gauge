@@ -10,6 +10,20 @@ Five gates, any one trips ⇒ recommend SPLIT:
 ACs ≤ 6 · files ≤ 3 · state-machine hits ≤ 1 · markers ≤ 3 · race/lifecycle prose = 0
 ```
 
+## Gates
+
+| # | Gate | Default | Counts | Why it trips |
+|---|------|---------|--------|--------------|
+| 1 | Acceptance criteria | `MAX_ACS=6` | Top-level AC list items under the configured Acceptance Criteria heading. | Too many independent outcomes for one implementation pass; missed ACs are the common overrun symptom. |
+| 2 | Files with logic changes | `MAX_FILES=3` | Distinct paths in the configured File List section, with sibling tests collapsed into their source file. | Broad blast radius raises coordination cost and makes review harder to complete against every touched behavior. |
+| 3 | State-machine / control-loop hits | `MAX_SM=1` | Keyword hits such as retry loop, poll loop, state machine, gate loop, fix-forward, saga, reducer. | Multiple state concerns multiply edge cases; verify `SM~` by hand because repeated prose can inflate the count. |
+| 4 | Risk markers | `MAX_MARKERS=3` | `CRITICAL`, `Do NOT`, `READ FIRST`, `IMPORTANT`, `WARNING`, `MUST NOT` in Dev Notes and ACs. | Marker density usually means hidden coupling or constraints the story could not isolate. |
+| 5 | Race / ordering / lifecycle prose | `MAX_RACE=0` | Terms such as microtask, EPIPE, race condition, deadlock, deferred until, stay alive, happens-before, out-of-order. | Temporal coupling is high-context work; split out prep/refactor or one lifecycle concern before feature wiring. |
+
+All gate inputs are configurable. Gates 3-5 are keyword proxies, so treat them as triage signals:
+inspect the story before overriding the verdict. When a gate trips, split vertically so each slice
+ships one user-visible outcome or one isolated invariant.
+
 Dependency-free bash (`bash` + `awk`/`grep`/`sed`). Works on any markdown story with an
 `## Acceptance Criteria` section. Everything — heading levels/text, file-path regex, keyword
 lists, thresholds — is configurable per repo.
