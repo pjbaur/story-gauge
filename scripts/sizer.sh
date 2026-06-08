@@ -33,7 +33,8 @@ sizer_config_key_allowed() {
   case "$1" in
     AC_HEADING|AC_LEVEL|DEVNOTES_HEADING|DEVNOTES_LEVEL|FILELIST_HEADING|FILELIST_LEVEL|\
     AC_ITEM_RE|FILE_PATH_RE|TEST_SIBLING_SED|SM_RE|MARKER_RE|RACE_RE|\
-    MAX_ACS|MAX_FILES|MAX_SM|MAX_MARKERS|MAX_RACE|WARN_DEVNOTES_LINES) return 0 ;;
+    MAX_ACS|MAX_FILES|MAX_SM|MAX_MARKERS|MAX_RACE|WARN_DEVNOTES_LINES|\
+    LLM_PROVIDER|LLM_MODEL|LLM_TIMEOUT_SECONDS|LLM_CONFIDENCE_THRESHOLD|LLM_FAIL_POLICY|LLM_CONTEXT_MAX_CHARS) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -64,11 +65,19 @@ sizer_validate_number() {
   [[ "$val" =~ ^[0-9]+$ ]] || { echo "config $key must be a non-negative integer: $val" >&2; return 2; }
 }
 
+sizer_validate_decimal_0_1() {
+  local key=$1 val
+  val=${!key:-}
+  [[ "$val" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]] || { echo "config $key must be between 0 and 1: $val" >&2; return 2; }
+}
+
 sizer_validate_config() {
   local key
-  for key in AC_LEVEL DEVNOTES_LEVEL FILELIST_LEVEL MAX_ACS MAX_FILES MAX_SM MAX_MARKERS MAX_RACE WARN_DEVNOTES_LINES; do
+  for key in AC_LEVEL DEVNOTES_LEVEL FILELIST_LEVEL MAX_ACS MAX_FILES MAX_SM MAX_MARKERS MAX_RACE WARN_DEVNOTES_LINES LLM_TIMEOUT_SECONDS LLM_CONTEXT_MAX_CHARS; do
     sizer_validate_number "$key" || return 2
   done
+  sizer_validate_decimal_0_1 LLM_CONFIDENCE_THRESHOLD || return 2
+  case "$LLM_FAIL_POLICY" in advisory|high-confidence|strict) ;; *) echo "config LLM_FAIL_POLICY must be advisory, high-confidence, or strict: $LLM_FAIL_POLICY" >&2; return 2 ;; esac
 }
 
 # Load defaults, then optional override (--config / env / CWD .story-gauge.conf).
@@ -81,6 +90,10 @@ sizer_load_config() {
   if [ -n "$override" ]; then
     sizer_apply_config_file "$override" || return 2
   fi
+  [ -n "${STORY_GAUGE_LLM_PROVIDER:-}" ] && LLM_PROVIDER="$STORY_GAUGE_LLM_PROVIDER"
+  [ -n "${STORY_GAUGE_LLM_MODEL:-}" ] && LLM_MODEL="$STORY_GAUGE_LLM_MODEL"
+  [ -n "${STORY_GAUGE_LLM_TIMEOUT_SECONDS:-}" ] && LLM_TIMEOUT_SECONDS="$STORY_GAUGE_LLM_TIMEOUT_SECONDS"
+  [ -n "${STORY_GAUGE_LLM_FAIL_POLICY:-}" ] && LLM_FAIL_POLICY="$STORY_GAUGE_LLM_FAIL_POLICY"
   sizer_validate_config
 }
 
@@ -188,3 +201,159 @@ sizer_json_array_lines() {
 
 # Map trip count -> risk word.
 sizer_risk() { case "$1" in 0) echo OK;; 1) echo SPLIT;; *) echo HIGH;; esac; }
+
+sizer_verdict() {
+  if [ "$1" -eq 0 ]; then
+    echo READY
+  else
+    echo SPLIT
+  fi
+}
+
+sizer_score_json_object() {
+  local file=$1 name=${2:-} risk=${3:-} verdict
+  verdict=$(sizer_verdict "$TRIP")
+  printf '{'
+  printf '"file":'; sizer_json_string "$file"; printf ','
+  if [ -n "$name" ]; then
+    printf '"name":'; sizer_json_string "$name"; printf ','
+  fi
+  printf '"acs":%s,' "$ACS"
+  printf '"files":%s,' "$FILES"
+  printf '"state_machine_hits":%s,' "$SM"
+  printf '"state_machine_terms":'; printf '%s\n' "$SM_TERMS" | sizer_json_array_lines; printf ','
+  printf '"markers":%s,' "$MARK"
+  printf '"race":%s,' "$RACE"
+  printf '"dev_notes_lines":%s,' "$DEVLINES"
+  printf '"gates_tripped":%s,' "$TRIP"
+  if [ -n "$risk" ]; then
+    printf '"risk":'; sizer_json_string "$risk"; printf ','
+  fi
+  printf '"verdict":'; sizer_json_string "$verdict"
+  printf '}'
+}
+
+sizer_json_merge_objects() {
+  local left=$1 right=$2
+  left=${left#\{}
+  left=${left%\}}
+  right=${right#\{}
+  right=${right%\}}
+  if [ -z "$left" ]; then
+    printf '{%s}' "$right"
+  elif [ -z "$right" ]; then
+    printf '{%s}' "$left"
+  else
+    printf '{%s,%s}' "$left" "$right"
+  fi
+}
+
+sizer_semantic_unavailable_json() {
+  local reason=$1
+  python3 - "$reason" <<'PY'
+import json
+import sys
+
+reason = sys.argv[1]
+gate = {"status": "unknown", "confidence": 0.0, "evidence": [], "reason": reason}
+print(json.dumps({
+    "semantic_status": "unavailable",
+    "semantic_gates": {
+        "state_machine": gate,
+        "risk_markers": gate,
+        "race_lifecycle": gate,
+    },
+    "semantic_verdict": "UNAVAILABLE",
+    "semantic_gates_tripped": 0,
+    "suggested_slices": [],
+}, separators=(",", ":")))
+PY
+}
+
+sizer_semantic_skipped_json() {
+  local reason=${1:-"semantic review skipped for low deterministic gate 3-5 signal"}
+  python3 - "$reason" <<'PY'
+import json
+import sys
+
+reason = sys.argv[1]
+gate = {"status": "unknown", "confidence": 0.0, "evidence": [], "reason": reason}
+print(json.dumps({
+    "semantic_status": "skipped",
+    "semantic_gates": {
+        "state_machine": gate,
+        "risk_markers": gate,
+        "race_lifecycle": gate,
+    },
+    "semantic_verdict": "SKIPPED",
+    "semantic_gates_tripped": 0,
+    "suggested_slices": [],
+}, separators=(",", ":")))
+PY
+}
+
+sizer_semantic_should_fail() {
+  local json=$1 policy=$2 threshold=$3
+  python3 - "$json" "$policy" "$threshold" <<'PY'
+import json
+import sys
+
+data = json.loads(sys.argv[1])
+policy = sys.argv[2]
+threshold = float(sys.argv[3])
+if policy == "advisory":
+    sys.exit(1)
+gates = data.get("semantic_gates") or {}
+for gate in gates.values():
+    if not isinstance(gate, dict) or gate.get("status") != "fail":
+        continue
+    conf = float(gate.get("confidence") or 0)
+    if policy == "strict" or conf >= threshold:
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+
+sizer_print_semantic_table() {
+  local json=$1 policy=$2
+  python3 - "$json" "$policy" <<'PY'
+import json
+import sys
+
+data = json.loads(sys.argv[1])
+policy = sys.argv[2]
+labels = {
+    "state_machine": "state-machine",
+    "risk_markers": "risk markers",
+    "race_lifecycle": "race/lifecycle",
+}
+print("----------------------------------------------")
+print("SEMANTIC REVIEW")
+print(f"  status: {data.get('semantic_status', 'available')}   policy: {policy}")
+for key in ("state_machine", "risk_markers", "race_lifecycle"):
+    gate = (data.get("semantic_gates") or {}).get(key) or {}
+    status = gate.get("status", "unknown")
+    confidence = float(gate.get("confidence") or 0)
+    reason = str(gate.get("reason") or "")
+    print(f"  {labels[key]:16s} {status:7s} {confidence:.2f}   {reason[:96]}")
+print(f"  verdict: {data.get('semantic_verdict', 'UNKNOWN')}   semantic gates tripped: {data.get('semantic_gates_tripped', 0)}")
+PY
+}
+
+sizer_semantic_codes() {
+  local json=$1
+  python3 - "$json" <<'PY'
+import json
+import sys
+
+data = json.loads(sys.argv[1])
+def code(key):
+    status = ((data.get("semantic_gates") or {}).get(key) or {}).get("status")
+    return {"pass": "P", "fail": "F", "unknown": "U"}.get(status, "-")
+print(code("state_machine"), code("risk_markers"), code("race_lifecycle"), data.get("semantic_verdict", "-"))
+PY
+}
+
+sizer_llm_should_review() {
+  [ "${SM:-0}" -gt 0 ] || [ "${MARK:-0}" -gt 0 ] || [ "${RACE:-0}" -gt 0 ]
+}

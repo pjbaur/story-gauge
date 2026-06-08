@@ -1,0 +1,267 @@
+#!/usr/bin/env bash
+# llm-review-gates — optional semantic review helper for gates 3-5.
+set -euo pipefail
+
+usage() {
+  echo "usage: llm-review-gates <story.md> --score-json JSON [--provider NAME] [--model MODEL] [--timeout SECONDS] [--context-max-chars N]" >&2
+}
+
+SRC="${BASH_SOURCE[0]}"
+while [ -h "$SRC" ]; do
+  D="$(cd -P "$(dirname "$SRC")" && pwd)"; SRC="$(readlink "$SRC")"
+  [ "${SRC#/}" = "$SRC" ] && SRC="$D/$SRC"
+done
+HERE="$(cd -P "$(dirname "$SRC")" && pwd)"
+# shellcheck source=./scripts/sizer.sh
+source "$HERE/sizer.sh"
+
+FILE=""
+SCORE_JSON=""
+PROVIDER="${LLM_PROVIDER:-${STORY_GAUGE_LLM_PROVIDER:-}}"
+MODEL="${LLM_MODEL:-${STORY_GAUGE_LLM_MODEL:-}}"
+TIMEOUT="${LLM_TIMEOUT_SECONDS:-${STORY_GAUGE_LLM_TIMEOUT_SECONDS:-30}}"
+CONTEXT_MAX_CHARS="${LLM_CONTEXT_MAX_CHARS:-24000}"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --score-json)
+      shift
+      [ $# -gt 0 ] || { usage; exit 2; }
+      SCORE_JSON="$1"
+      ;;
+    --provider)
+      shift
+      [ $# -gt 0 ] || { usage; exit 2; }
+      PROVIDER="$1"
+      ;;
+    --model)
+      shift
+      [ $# -gt 0 ] || { usage; exit 2; }
+      MODEL="$1"
+      ;;
+    --timeout)
+      shift
+      [ $# -gt 0 ] || { usage; exit 2; }
+      TIMEOUT="$1"
+      ;;
+    --context-max-chars)
+      shift
+      [ $# -gt 0 ] || { usage; exit 2; }
+      CONTEXT_MAX_CHARS="$1"
+      ;;
+    -h|--help) usage; exit 0 ;;
+    *)
+      [ -z "$FILE" ] || { echo "unexpected arg: $1" >&2; exit 2; }
+      FILE="$1"
+      ;;
+  esac
+  shift
+done
+
+[ -n "$FILE" ] || { usage; exit 2; }
+[ -n "$SCORE_JSON" ] || { usage; exit 2; }
+[ -f "$FILE" ] || { echo "no such file: $FILE" >&2; exit 2; }
+
+unavailable() {
+  sizer_semantic_unavailable_json "$1"
+}
+
+build_chat_request() {
+  python3 - "$FILE" "$SCORE_JSON" "$MODEL" "$CONTEXT_MAX_CHARS" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path, score_json, model, max_chars = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+story = Path(path).read_text(encoding="utf-8", errors="replace")[:max_chars]
+score = json.loads(score_json)
+payload = {
+    "deterministic_score": {
+        "state_machine_hits": score.get("state_machine_hits", 0),
+        "markers": score.get("markers", 0),
+        "race": score.get("race", 0),
+    },
+    "gate_definitions": {
+        "state_machine": "Stateful workflow, control loop, retries, phases, transitions, reducers, watchers, orchestration, or fix-forward behavior.",
+        "risk_markers": "Dense warnings, must-not constraints, hidden coupling, invariants, or fragile implementation constraints.",
+        "race_lifecycle": "Temporal ordering, lifecycle, shutdown, process/signal behavior, async races, happens-before requirements, out-of-order handling, or connection lifetime.",
+    },
+    "required_schema": {
+        "semantic_gates": {
+            "state_machine": {"status": "pass|fail|unknown", "confidence": "0..1", "evidence": ["copied story text"], "reason": "short"},
+            "risk_markers": {"status": "pass|fail|unknown", "confidence": "0..1", "evidence": ["copied story text"], "reason": "short"},
+            "race_lifecycle": {"status": "pass|fail|unknown", "confidence": "0..1", "evidence": ["copied story text"], "reason": "short"},
+        },
+        "semantic_verdict": "READY|SPLIT|UNKNOWN",
+        "semantic_gates_tripped": "integer",
+        "suggested_slices": ["short strings"],
+    },
+    "story_text": story,
+}
+system = (
+    "You classify story sizing risk for gates 3-5 only. Use only provided story text. "
+    "Return strict JSON. Do not invent evidence. If evidence is ambiguous, use unknown. "
+    "Every fail must include short evidence copied exactly from story_text."
+)
+print(json.dumps({
+    "model": model,
+    "messages": [
+        {"role": "system", "content": system},
+        {"role": "user", "content": json.dumps(payload, separators=(",", ":"))},
+    ],
+    "response_format": {"type": "json_object"},
+    "temperature": 0,
+}, separators=(",", ":")))
+PY
+}
+
+extract_openai_content() {
+  local response=$1
+  OPENAI_RESPONSE="$response" python3 - <<'PY'
+import json
+import os
+import sys
+
+data = json.loads(os.environ["OPENAI_RESPONSE"])
+try:
+    print(data["choices"][0]["message"]["content"])
+except Exception as exc:
+    raise SystemExit(f"missing OpenAI response content: {exc}")
+PY
+}
+
+validate_semantic_json() {
+  local raw_json=$1
+  RAW_SEMANTIC_JSON="$raw_json" python3 - "$FILE" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+story = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+try:
+    raw = os.environ["RAW_SEMANTIC_JSON"]
+    data = json.loads(raw)
+except Exception as exc:
+    reason = f"semantic review unavailable: invalid JSON ({exc})"
+    gate = {"status": "unknown", "confidence": 0.0, "evidence": [], "reason": reason}
+    print(json.dumps({
+        "semantic_status": "unavailable",
+        "semantic_gates": {"state_machine": gate, "risk_markers": gate, "race_lifecycle": gate},
+        "semantic_verdict": "UNAVAILABLE",
+        "semantic_gates_tripped": 0,
+        "suggested_slices": [],
+    }, separators=(",", ":")))
+    raise SystemExit(0)
+
+allowed = {"pass", "fail", "unknown"}
+semantic_gates = {}
+gates_input = data.get("semantic_gates")
+if not isinstance(gates_input, dict):
+    gates_input = {}
+for key in ("state_machine", "risk_markers", "race_lifecycle"):
+    gate = gates_input.get(key, {})
+    if not isinstance(gate, dict):
+        gate = {}
+    status = gate.get("status", "unknown")
+    if status not in allowed:
+        status = "unknown"
+    try:
+        confidence = float(gate.get("confidence", 0))
+    except Exception:
+        confidence = 0.0
+    confidence = max(0.0, min(1.0, confidence))
+    evidence = []
+    for item in gate.get("evidence", []):
+        if not isinstance(item, str):
+            continue
+        text = item.strip()[:240]
+        if text and text in story:
+            evidence.append(text)
+        if len(evidence) >= 5:
+            break
+    reason = str(gate.get("reason", ""))[:300]
+    if status == "fail" and not evidence:
+        status = "unknown"
+        confidence = 0.0
+        reason = "fail omitted exact story evidence; treated as unknown"
+    semantic_gates[key] = {
+        "status": status,
+        "confidence": confidence,
+        "evidence": evidence,
+        "reason": reason,
+    }
+
+tripped = sum(1 for gate in semantic_gates.values() if gate["status"] == "fail")
+if tripped:
+    verdict = "SPLIT"
+elif any(gate["status"] == "unknown" for gate in semantic_gates.values()):
+    verdict = "UNKNOWN"
+else:
+    verdict = "READY"
+slices = []
+for item in data.get("suggested_slices", []):
+    if isinstance(item, str) and item.strip():
+        slices.append(" ".join(item.split())[:240])
+    if len(slices) >= 5:
+        break
+
+print(json.dumps({
+    "semantic_status": "available",
+    "semantic_gates": semantic_gates,
+    "semantic_verdict": verdict,
+    "semantic_gates_tripped": tripped,
+    "suggested_slices": slices,
+}, separators=(",", ":")))
+PY
+}
+
+llm_call_stub() {
+  if [ -n "${STORY_GAUGE_LLM_STUB_RESPONSE:-}" ]; then
+    printf '%s' "$STORY_GAUGE_LLM_STUB_RESPONSE"
+  elif [ -n "${STORY_GAUGE_LLM_STUB_RESPONSE_FILE:-}" ] && [ -f "$STORY_GAUGE_LLM_STUB_RESPONSE_FILE" ]; then
+    sed -n '1,$p' "$STORY_GAUGE_LLM_STUB_RESPONSE_FILE"
+  else
+    return 1
+  fi
+}
+
+llm_call_openai() {
+  [ -n "${OPENAI_API_KEY:-}" ] || { unavailable "semantic review unavailable: OPENAI_API_KEY is not set"; return 3; }
+  [ -n "$MODEL" ] || { unavailable "semantic review unavailable: LLM model is not configured"; return 3; }
+  command -v curl >/dev/null 2>&1 || { unavailable "semantic review unavailable: curl is not installed"; return 3; }
+
+  local req
+  req=$(build_chat_request) || { unavailable "semantic review unavailable: failed to build prompt"; return 3; }
+  if ! raw=$(printf '%s' "$req" | curl -sS --max-time "$TIMEOUT" \
+      -H "Authorization: Bearer $OPENAI_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d @- https://api.openai.com/v1/chat/completions 2>/dev/null); then
+    unavailable "semantic review unavailable: provider error or timeout"
+    return 3
+  fi
+  extract_openai_content "$raw"
+}
+
+case "$PROVIDER" in
+  "") unavailable "semantic review unavailable: LLM provider is not configured" ;;
+  stub)
+    if raw=$(llm_call_stub); then
+      validate_semantic_json "$raw"
+    else
+      unavailable "semantic review unavailable: stub response is not configured"
+    fi
+    ;;
+  openai)
+    if raw=$(llm_call_openai); then
+      validate_semantic_json "$raw"
+    else
+      if [ -n "$raw" ]; then
+        printf '%s\n' "$raw"
+      else
+        unavailable "semantic review unavailable: provider error or timeout"
+      fi
+    fi
+    ;;
+  *) unavailable "semantic review unavailable: unsupported provider: $PROVIDER" ;;
+esac

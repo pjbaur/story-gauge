@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scan-backlog — risk dashboard across every story file in a directory (recursive).
-# Usage: scan-backlog [dir] [--format table|json] [--config FILE]   (default dir: .)
+# Usage: scan-backlog [dir] [--format table|json] [--config FILE] [--llm]   (default dir: .)
 set -euo pipefail
 
 # Resolve real script dir even when invoked through a symlink (install.sh links to PATH).
@@ -13,9 +13,12 @@ HERE="$(cd -P "$(dirname "$SRC")" && pwd)"
 # shellcheck source=./scripts/sizer.sh
 source "$HERE/sizer.sh"
 
-usage() { echo "usage: scan-backlog [dir] [--format table|json] [--config FILE]" >&2; }
+usage() {
+  echo "usage: scan-backlog [dir] [--format table|json] [--config FILE] [--llm] [--llm-provider NAME] [--llm-model MODEL] [--llm-timeout SECONDS] [--llm-fail-policy advisory|high-confidence|strict]" >&2
+}
 
-DIR="."; FORMAT="table"
+DIR="."; FORMAT="table"; LLM=0
+LLM_PROVIDER_ARG=""; LLM_MODEL_ARG=""; LLM_TIMEOUT_ARG=""; LLM_FAIL_POLICY_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --json) FORMAT="json" ;;
@@ -30,6 +33,27 @@ while [ $# -gt 0 ]; do
       [ $# -gt 0 ] || { usage; exit 2; }
       export STORY_GAUGE_CONFIG="$1"
       ;;
+    --llm) LLM=1 ;;
+    --llm-provider)
+      shift
+      [ $# -gt 0 ] || { usage; exit 2; }
+      LLM_PROVIDER_ARG="$1"
+      ;;
+    --llm-model)
+      shift
+      [ $# -gt 0 ] || { usage; exit 2; }
+      LLM_MODEL_ARG="$1"
+      ;;
+    --llm-timeout)
+      shift
+      [ $# -gt 0 ] || { usage; exit 2; }
+      LLM_TIMEOUT_ARG="$1"
+      ;;
+    --llm-fail-policy)
+      shift
+      [ $# -gt 0 ] || { usage; exit 2; }
+      LLM_FAIL_POLICY_ARG="$1"
+      ;;
     -h|--help) usage; exit 0 ;;
     *) DIR="$1" ;;
   esac
@@ -38,46 +62,82 @@ done
 [ -d "$DIR" ] || { echo "no such dir: $DIR" >&2; exit 2; }
 
 sizer_load_config
+[ -n "$LLM_PROVIDER_ARG" ] && LLM_PROVIDER="$LLM_PROVIDER_ARG"
+[ -n "$LLM_MODEL_ARG" ] && LLM_MODEL="$LLM_MODEL_ARG"
+[ -n "$LLM_TIMEOUT_ARG" ] && LLM_TIMEOUT_SECONDS="$LLM_TIMEOUT_ARG"
+[ -n "$LLM_FAIL_POLICY_ARG" ] && LLM_FAIL_POLICY="$LLM_FAIL_POLICY_ARG"
+sizer_validate_config
 
 if [ "$FORMAT" = "table" ]; then
-  printf '%-50s %4s %5s %4s %5s %5s  %s\n' "story" "ACs" "files" "SM~" "mark" "race" "risk"
-  printf '%s\n' "--------------------------------------------------------------------------------------"
+  if [ "$LLM" -eq 1 ]; then
+    printf '%-38s %4s %5s %4s %5s %5s  %-6s %3s %5s %5s  %s\n' "story" "ACs" "files" "SM~" "mark" "race" "risk" "SM*" "MARK*" "RACE*" "SEM"
+    printf '%s\n' "---------------------------------------------------------------------------------------------------------"
+  else
+    printf '%-50s %4s %5s %4s %5s %5s  %s\n' "story" "ACs" "files" "SM~" "mark" "race" "risk"
+    printf '%s\n' "--------------------------------------------------------------------------------------"
+  fi
 else
   printf '{"stories":['
 fi
 
-OK=0; SPLIT=0; HIGH=0; FIRST_JSON=1
+OK=0; SPLIT=0; HIGH=0; FIRST_JSON=1; SEMANTIC_FAIL=0
 while IFS= read -r f; do
   sizer_is_story "$f" || continue
   sizer_score_file "$f"
   risk=$(sizer_risk "$TRIP"); tag="$risk"; [ "$TRIP" -ge 2 ] && tag="HIGH*"
+  score_json=$(sizer_score_json_object "$f" "$(basename "${f%.md}")" "$risk")
+  semantic_json=""
+  if [ "$LLM" -eq 1 ]; then
+    if sizer_llm_should_review; then
+      if ! semantic_json=$("$HERE/llm-review-gates" "$f" \
+          --score-json "$score_json" \
+          --provider "$LLM_PROVIDER" \
+          --model "$LLM_MODEL" \
+          --timeout "$LLM_TIMEOUT_SECONDS" \
+          --context-max-chars "$LLM_CONTEXT_MAX_CHARS"); then
+        semantic_json=$(sizer_semantic_unavailable_json "semantic review unavailable: helper failed")
+      fi
+    else
+      semantic_json=$(sizer_semantic_skipped_json)
+    fi
+    if sizer_semantic_should_fail "$semantic_json" "$LLM_FAIL_POLICY" "$LLM_CONFIDENCE_THRESHOLD"; then
+      SEMANTIC_FAIL=1
+    fi
+  fi
   case "$risk" in OK) OK=$((OK+1));; SPLIT) SPLIT=$((SPLIT+1));; HIGH) HIGH=$((HIGH+1));; esac
   name="$(basename "${f%.md}")"
   if [ "$FORMAT" = "table" ]; then
-    printf '%-50.50s %4s %5s %4s %5s %5s  %s\n' "$name" "$ACS" "$FILES" "$SM" "$MARK" "$RACE" "$tag"
+    if [ "$LLM" -eq 1 ]; then
+      read -r sm_code mark_code race_code sem_code <<<"$(sizer_semantic_codes "$semantic_json")"
+      printf '%-38.38s %4s %5s %4s %5s %5s  %-6s %3s %5s %5s  %s\n' "$name" "$ACS" "$FILES" "$SM" "$MARK" "$RACE" "$tag" "$sm_code" "$mark_code" "$race_code" "$sem_code"
+    else
+      printf '%-50.50s %4s %5s %4s %5s %5s  %s\n' "$name" "$ACS" "$FILES" "$SM" "$MARK" "$RACE" "$tag"
+    fi
   else
     [ "$FIRST_JSON" -eq 0 ] && printf ','
     FIRST_JSON=0
-    printf '{'
-    printf '"file":'; sizer_json_string "$f"; printf ','
-    printf '"name":'; sizer_json_string "$name"; printf ','
-    printf '"acs":%s,' "$ACS"
-    printf '"files":%s,' "$FILES"
-    printf '"state_machine_hits":%s,' "$SM"
-    printf '"state_machine_terms":'; printf '%s\n' "$SM_TERMS" | sizer_json_array_lines; printf ','
-    printf '"markers":%s,' "$MARK"
-    printf '"race":%s,' "$RACE"
-    printf '"dev_notes_lines":%s,' "$DEVLINES"
-    printf '"gates_tripped":%s,' "$TRIP"
-    printf '"risk":'; sizer_json_string "$risk"
-    printf '}'
+    if [ "$LLM" -eq 1 ]; then
+      sizer_json_merge_objects "$score_json" "$semantic_json"
+    else
+      printf '%s' "$score_json"
+    fi
   fi
 done < <(find "$DIR" -type f -name '*.md' | sort)
 
 if [ "$FORMAT" = "table" ]; then
-  printf '%s\n' "--------------------------------------------------------------------------------------"
+  if [ "$LLM" -eq 1 ]; then
+    printf '%s\n' "---------------------------------------------------------------------------------------------------------"
+  else
+    printf '%s\n' "--------------------------------------------------------------------------------------"
+  fi
   printf 'totals: %s OK  |  %s SPLIT  |  %s HIGH   (* = recommend split)\n' "$OK" "$SPLIT" "$HIGH"
-  echo "SM~ = keyword hit count, verify by hand. Gates: ACs<=$MAX_ACS files<=$MAX_FILES SM<=$MAX_SM mark<=$MAX_MARKERS race<=$MAX_RACE"
+  if [ "$LLM" -eq 1 ]; then
+    echo "SM~ = keyword hit count. SM*/MARK*/RACE*: P pass, F fail, U unknown. SEM is advisory unless fail policy says otherwise."
+  else
+    echo "SM~ = keyword hit count, verify by hand. Gates: ACs<=$MAX_ACS files<=$MAX_FILES SM<=$MAX_SM mark<=$MAX_MARKERS race<=$MAX_RACE"
+  fi
 else
   printf '],"totals":{"ok":%s,"split":%s,"high":%s}}\n' "$OK" "$SPLIT" "$HIGH"
 fi
+
+[ "$SEMANTIC_FAIL" -eq 0 ]

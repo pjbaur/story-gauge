@@ -23,6 +23,27 @@ All thresholds are config (`config/default.conf` or a per-project `.story-gauge.
 
 ---
 
+## Optional semantic review
+
+Use `--llm` only when user opts in to sending story text to a configured provider. It reviews gates
+3-5, not gates 1-2. Deterministic counts still run first and remain default CI posture.
+
+Semantic statuses:
+
+- `pass` — story does not appear to trip this semantic gate.
+- `fail` — story appears to trip this semantic gate and includes exact story evidence.
+- `unknown` — evidence is insufficient, ambiguous, invalid, or unavailable.
+
+LLM output is schema-validated before display. `fail` without exact copied evidence becomes
+`unknown`; provider errors, missing credentials, timeouts, and invalid JSON become
+`semantic_status=unavailable`. Default fail policy is `advisory`, so semantic findings do not alter
+exit code unless `high-confidence` or `strict` is selected.
+
+In backlog scans, semantic review runs only for stories with gate 3-5 deterministic signal; low-signal
+stories are marked skipped.
+
+---
+
 ## Structural tells (judgment, beyond counts)
 
 - **Marker density** = hidden coupling the author felt but couldn't remove.

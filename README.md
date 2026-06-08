@@ -24,6 +24,106 @@ All gate inputs are configurable. Gates 3-5 are keyword proxies, so treat them a
 inspect the story before overriding the verdict. When a gate trips, split vertically so each slice
 ships one user-visible outcome or one isolated invariant.
 
+## Optional LLM semantic review
+
+Deterministic scoring remains default. Add `--llm` to request semantic review for gates 3-5:
+
+```sh
+score-story path/to/story.md --llm
+score-story path/to/story.md --llm --format json
+scan-backlog path/to/stories/ --llm
+scan-backlog path/to/stories/ --llm --format json
+```
+
+LLM mode is opt-in because story text may leave your machine. Provider credentials are never read
+from config files; use provider-native environment variables such as `OPENAI_API_KEY`. If provider
+settings, credentials, network, timeout, or JSON validation fail, Story Gauge keeps deterministic
+output and marks semantic review unavailable.
+
+LLM options:
+
+- `--llm`: request semantic review for gates 3-5.
+- `--llm-provider <name>`: provider selector. Current runtime provider: `openai`. Tests also use
+  internal `stub`.
+- `--llm-model <model>`: model selector.
+- `--llm-timeout <seconds>`: provider call timeout.
+- `--llm-fail-policy advisory|high-confidence|strict`: semantic exit-code policy.
+
+Semantic gate statuses:
+
+- `pass`: story does not appear to trip this semantic gate.
+- `fail`: story appears to trip this semantic gate and includes exact story evidence.
+- `unknown`: evidence is insufficient, ambiguous, invalid, or unavailable.
+
+Configure defaults with whitelisted config keys or environment overrides:
+
+```sh
+LLM_PROVIDER='openai'
+LLM_MODEL='your-model'
+LLM_TIMEOUT_SECONDS=30
+LLM_CONFIDENCE_THRESHOLD=0.75
+LLM_FAIL_POLICY='advisory'
+LLM_CONTEXT_MAX_CHARS=24000
+
+STORY_GAUGE_LLM_PROVIDER=openai
+STORY_GAUGE_LLM_MODEL=your-model
+STORY_GAUGE_LLM_TIMEOUT_SECONDS=30
+STORY_GAUGE_LLM_FAIL_POLICY=advisory
+```
+
+`LLM_CONTEXT_MAX_CHARS` size-limits story text sent to the provider.
+
+Fail policies:
+
+- `advisory` (default): semantic findings never change exit code.
+- `high-confidence`: exit non-zero when any semantic gate fails at or above
+  `LLM_CONFIDENCE_THRESHOLD`.
+- `strict`: exit non-zero on any semantic fail. Unavailable LLM stays advisory.
+
+Table output prints deterministic verdict first, then a semantic block:
+
+```
+SEMANTIC REVIEW
+  status: available   policy: advisory
+  state-machine    fail    0.83   story contains multiple retry and phase transitions
+  risk markers     pass    0.64   warning density is low
+  race/lifecycle   unknown 0.41   ordering evidence is ambiguous
+  verdict: SPLIT   semantic gates tripped: 1
+```
+
+JSON output merges semantic fields into deterministic fields:
+
+```json
+{
+  "verdict": "READY",
+  "semantic_status": "available",
+  "semantic_verdict": "SPLIT",
+  "semantic_gates_tripped": 1,
+  "semantic_gates": {
+    "state_machine": {
+      "status": "fail",
+      "confidence": 0.83,
+      "evidence": ["retry loop"],
+      "reason": "multiple stateful control concerns"
+    }
+  }
+}
+```
+
+Backlog table output adds semantic columns for likely-interesting stories:
+
+```
+story                                   ACs files  SM~  mark  race  risk   SM* MARK* RACE*  SEM
+---------------------------------------------------------------------------------------------------------
+6-4-red-ci-rolls-back-phase-claim        10     4    3    13     2  HIGH*    F     F     F  SPLIT
+---------------------------------------------------------------------------------------------------------
+SM~ = keyword hit count. SM*/MARK*/RACE*: P pass, F fail, U unknown.
+```
+
+Recommended CI posture: keep deterministic `score-story --quiet` as blocking gate. Use
+`--llm --llm-fail-policy advisory --format json` for review hints, or move to
+`high-confidence` only after local calibration.
+
 Dependency-free bash (`bash` + `awk`/`grep`/`sed`). Works on any markdown story with an
 `## Acceptance Criteria` section. Everything — heading levels/text, file-path regex, keyword
 lists, thresholds — is configurable per repo.
@@ -65,9 +165,11 @@ score-story path/to/story.md                  # table + verdict; exit 0=READY 1=
 score-story path/to/story.md --quiet          # exit code only (for CI / pre-commit)
 score-story path/to/story.md --format json    # machine-readable result
 score-story path/to/story.md --json           # same as --format json
+score-story path/to/story.md --llm            # opt-in semantic review for gates 3-5
 scan-backlog path/to/stories/                 # risk dashboard across a folder (recursive)
 scan-backlog path/to/stories/ --format json   # machine-readable dashboard
 scan-backlog path/to/stories/ --json          # same as --format json
+scan-backlog path/to/stories/ --llm           # semantic columns for likely-interesting stories
 ```
 
 Example:

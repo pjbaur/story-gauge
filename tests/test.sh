@@ -101,4 +101,36 @@ assert_status 0
 assert_grep '"totals":\{"ok":1,"split":1,"high":0\}' "$OUT"
 assert_grep '"risk":"SPLIT"' "$OUT"
 
+run "$ROOT/scripts/score-story" "$TMP/ready.md" --llm --format json
+assert_status 0
+assert_grep '"semantic_status":"unavailable"' "$OUT"
+assert_grep '"verdict":"READY"' "$OUT"
+
+stub_valid='{"semantic_gates":{"state_machine":{"status":"fail","confidence":0.8,"evidence":["criterion 1"],"reason":"stateful concern"},"risk_markers":{"status":"pass","confidence":0.6,"evidence":[],"reason":"no dense warnings"},"race_lifecycle":{"status":"unknown","confidence":0.4,"evidence":[],"reason":"ambiguous"}},"suggested_slices":["split stateful concern"]}'
+run env STORY_GAUGE_LLM_PROVIDER=stub STORY_GAUGE_LLM_STUB_RESPONSE="$stub_valid" "$ROOT/scripts/score-story" "$TMP/ready.md" --llm --format json
+assert_status 0
+assert_grep '"semantic_status":"available"' "$OUT"
+assert_grep '"semantic_verdict":"SPLIT"' "$OUT"
+assert_grep '"semantic_gates_tripped":1' "$OUT"
+
+run env STORY_GAUGE_LLM_PROVIDER=stub STORY_GAUGE_LLM_STUB_RESPONSE="$stub_valid" "$ROOT/scripts/score-story" "$TMP/ready.md" --llm --llm-fail-policy high-confidence --quiet
+assert_status 1
+
+run env STORY_GAUGE_LLM_PROVIDER=stub STORY_GAUGE_LLM_STUB_RESPONSE='not-json' "$ROOT/scripts/score-story" "$TMP/ready.md" --llm --format json
+assert_status 0
+assert_grep '"semantic_status":"unavailable"' "$OUT"
+assert_grep 'invalid JSON' "$OUT"
+
+stub_no_evidence='{"semantic_gates":{"state_machine":{"status":"fail","confidence":0.9,"evidence":["not copied from story"],"reason":"bad evidence"},"risk_markers":{"status":"pass","confidence":0.6,"evidence":[],"reason":"no dense warnings"},"race_lifecycle":{"status":"pass","confidence":0.6,"evidence":[],"reason":"no lifecycle prose"}}}'
+run env STORY_GAUGE_LLM_PROVIDER=stub STORY_GAUGE_LLM_STUB_RESPONSE="$stub_no_evidence" "$ROOT/scripts/score-story" "$TMP/ready.md" --llm --format json
+assert_status 0
+assert_grep 'fail omitted exact story evidence' "$OUT"
+assert_grep '"semantic_verdict":"UNKNOWN"' "$OUT"
+
+cp "$TMP/retry.md" "$TMP/backlog/retry.md"
+run env STORY_GAUGE_LLM_PROVIDER=stub STORY_GAUGE_LLM_STUB_RESPONSE="$stub_valid" "$ROOT/scripts/scan-backlog" "$TMP/backlog" --llm --format json
+assert_status 0
+assert_grep '"semantic_status":"available"' "$OUT"
+assert_grep '"semantic_status":"skipped"' "$OUT"
+
 echo "ok - $PASS assertions"

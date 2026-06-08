@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # score-story — score one markdown story/spec against the sizing gates.
-# Usage: score-story <story.md> [--quiet] [--format table|json] [--config FILE]
+# Usage: score-story <story.md> [--quiet] [--format table|json] [--config FILE] [--llm]
 # Exit:  0 = READY (no gate tripped) | 1 = SPLIT (>=1 tripped) | 2 = usage error
 set -euo pipefail
 
@@ -14,9 +14,12 @@ HERE="$(cd -P "$(dirname "$SRC")" && pwd)"
 # shellcheck source=./scripts/sizer.sh
 source "$HERE/sizer.sh"
 
-usage() { echo "usage: score-story <story.md> [--quiet] [--format table|json] [--config FILE]" >&2; }
+usage() {
+  echo "usage: score-story <story.md> [--quiet] [--format table|json] [--config FILE] [--llm] [--llm-provider NAME] [--llm-model MODEL] [--llm-timeout SECONDS] [--llm-fail-policy advisory|high-confidence|strict]" >&2
+}
 
-QUIET=0; FORMAT="table"; FILE=""
+QUIET=0; FORMAT="table"; FILE=""; LLM=0
+LLM_PROVIDER_ARG=""; LLM_MODEL_ARG=""; LLM_TIMEOUT_ARG=""; LLM_FAIL_POLICY_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --quiet) QUIET=1 ;;
@@ -32,6 +35,27 @@ while [ $# -gt 0 ]; do
       [ $# -gt 0 ] || { usage; exit 2; }
       export STORY_GAUGE_CONFIG="$1"
       ;;
+    --llm) LLM=1 ;;
+    --llm-provider)
+      shift
+      [ $# -gt 0 ] || { usage; exit 2; }
+      LLM_PROVIDER_ARG="$1"
+      ;;
+    --llm-model)
+      shift
+      [ $# -gt 0 ] || { usage; exit 2; }
+      LLM_MODEL_ARG="$1"
+      ;;
+    --llm-timeout)
+      shift
+      [ $# -gt 0 ] || { usage; exit 2; }
+      LLM_TIMEOUT_ARG="$1"
+      ;;
+    --llm-fail-policy)
+      shift
+      [ $# -gt 0 ] || { usage; exit 2; }
+      LLM_FAIL_POLICY_ARG="$1"
+      ;;
     -h|--help) sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)
       [ -z "$FILE" ] || { echo "unexpected arg: $1" >&2; exit 2; }
@@ -44,7 +68,25 @@ done
 [ -f "$FILE" ] || { echo "no such file: $FILE" >&2; exit 2; }
 
 sizer_load_config
+[ -n "$LLM_PROVIDER_ARG" ] && LLM_PROVIDER="$LLM_PROVIDER_ARG"
+[ -n "$LLM_MODEL_ARG" ] && LLM_MODEL="$LLM_MODEL_ARG"
+[ -n "$LLM_TIMEOUT_ARG" ] && LLM_TIMEOUT_SECONDS="$LLM_TIMEOUT_ARG"
+[ -n "$LLM_FAIL_POLICY_ARG" ] && LLM_FAIL_POLICY="$LLM_FAIL_POLICY_ARG"
+sizer_validate_config
 sizer_score_file "$FILE" || { echo "missing required section: $(sizer_hashes "$AC_LEVEL") $AC_HEADING" >&2; exit 2; }
+
+score_json=$(sizer_score_json_object "$FILE")
+semantic_json=""
+if [ "$LLM" -eq 1 ]; then
+  if ! semantic_json=$("$HERE/llm-review-gates" "$FILE" \
+      --score-json "$score_json" \
+      --provider "$LLM_PROVIDER" \
+      --model "$LLM_MODEL" \
+      --timeout "$LLM_TIMEOUT_SECONDS" \
+      --context-max-chars "$LLM_CONTEXT_MAX_CHARS"); then
+    semantic_json=$(sizer_semantic_unavailable_json "semantic review unavailable: helper failed")
+  fi
+fi
 
 if [ "$QUIET" -eq 0 ]; then
   case "$FORMAT" in
@@ -67,27 +109,22 @@ if [ "$QUIET" -eq 0 ]; then
         1) echo "VERDICT: SPLIT   (1 gate tripped)" ;;
         *) echo "VERDICT: SPLIT   ($TRIP gates tripped - HIGH)" ;;
       esac
+      if [ "$LLM" -eq 1 ]; then
+        sizer_print_semantic_table "$semantic_json" "$LLM_FAIL_POLICY"
+      fi
       ;;
     json)
-      printf '{'
-      printf '"file":'; sizer_json_string "$FILE"; printf ','
-      printf '"acs":%s,' "$ACS"
-      printf '"files":%s,' "$FILES"
-      printf '"state_machine_hits":%s,' "$SM"
-      printf '"state_machine_terms":'; printf '%s\n' "$SM_TERMS" | sizer_json_array_lines; printf ','
-      printf '"markers":%s,' "$MARK"
-      printf '"race":%s,' "$RACE"
-      printf '"dev_notes_lines":%s,' "$DEVLINES"
-      printf '"gates_tripped":%s,' "$TRIP"
-      printf '"verdict":'
-      if [ "$TRIP" -eq 0 ]; then
-        sizer_json_string "READY"
+      if [ "$LLM" -eq 1 ]; then
+        sizer_json_merge_objects "$score_json" "$semantic_json"
       else
-        sizer_json_string "SPLIT"
+        printf '%s' "$score_json"
       fi
-      printf '}\n'
+      printf '\n'
       ;;
   esac
 fi
 
+if [ "$LLM" -eq 1 ] && sizer_semantic_should_fail "$semantic_json" "$LLM_FAIL_POLICY" "$LLM_CONFIDENCE_THRESHOLD"; then
+  exit 1
+fi
 [ "$TRIP" -eq 0 ]

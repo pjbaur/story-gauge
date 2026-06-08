@@ -27,17 +27,25 @@ Score one story (exit 0 = READY, 1 = SPLIT):
 scripts/score-story path/to/story.md
 # CI/quiet (no table, just exit code):
 scripts/score-story path/to/story.md --quiet
+# Optional semantic review for gates 3-5:
+scripts/score-story path/to/story.md --llm
 ```
 
 Scan a backlog directory (recursive):
 ```sh
 scripts/scan-backlog path/to/stories/
+scripts/scan-backlog path/to/stories/ --llm
 ```
 
 Per-repo overrides (heading levels/text, file-path regex, keyword lists, thresholds): drop a
 `.story-gauge.conf` in the working dir, or pass `--config FILE`. Only override the keys you change;
 see `config/default.conf` for every key. Config files accept whitelisted `KEY=value` settings only;
 they are parsed, not shell-sourced.
+
+`--llm` is opt-in and advisory by default. It reviews gates 3-5 only, validates strict JSON,
+requires exact story evidence for semantic fails, and degrades to deterministic output when provider
+settings, credentials, timeout, network, or JSON validation fail. Credentials stay in provider-native
+environment variables such as `OPENAI_API_KEY`; do not put secrets in `.story-gauge.conf`.
 
 ## Interpreting output
 
@@ -49,6 +57,7 @@ Five gates (defaults): `ACs ≤ 6 · files ≤ 3 · state-machine hits ≤ 1 · 
 
 **Critical caveats to relay to the user, not hide:**
 - `SM~` (state-machine hits) is a keyword estimate — **verify by hand** before asserting it.
+- LLM semantic review is advisory unless `--llm-fail-policy high-confidence|strict` is explicitly set.
 - The proxies measure prose, not ground truth. If a whole backlog flags HIGH, the thresholds
   likely need calibration to that team's house style — say so; don't present it as "everything is broken."
 - Treat the dashboard as a **ranking**: the all-gates outlier is the real signal regardless of
