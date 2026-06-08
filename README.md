@@ -50,14 +50,16 @@ Inside an agent, just ask ("size this story", "scan the backlog"). Direct CLI us
 score-story path/to/story.md                  # table + verdict; exit 0=READY 1=SPLIT
 score-story path/to/story.md --quiet          # exit code only (for CI / pre-commit)
 score-story path/to/story.md --format json    # machine-readable result
+score-story path/to/story.md --json           # same as --format json
 scan-backlog path/to/stories/                 # risk dashboard across a folder (recursive)
 scan-backlog path/to/stories/ --format json   # machine-readable dashboard
+scan-backlog path/to/stories/ --json          # same as --format json
 ```
 
 Example:
 
 ```
-STORY SIZING SCORE — 6-4-red-ci-rolls-back-phase-claim.md
+STORY SIZING SCORE - 6-4-red-ci-rolls-back-phase-claim.md
 ----------------------------------------------
   1 ACs                      10   FAIL (max 6)
   2 files (logic)             4   FAIL (max 3)
@@ -66,7 +68,7 @@ STORY SIZING SCORE — 6-4-red-ci-rolls-back-phase-claim.md
   5 race/lifecycle            2   FAIL (max 0)
     dev-notes lines         203   (warn >120)
 ----------------------------------------------
-VERDICT: SPLIT  (5 gates tripped — risk HIGH)
+VERDICT: SPLIT   (5 gates tripped - HIGH)
 ```
 
 ## Configure per repo
@@ -93,6 +95,7 @@ config/default.conf                       # all tunables
 references/story-sizing-rubric.md         # gates, tells, split pattern
 templates/overrun-log.md                  # empirical-calibration loop
 install.sh                                # multi-harness installer
+tests/test.sh                             # shell test harness
 ```
 
 ## Calibration caveat (read this)
@@ -111,3 +114,7 @@ state-machine hit count (`SM~`).
 score-story path/to/changed-story.md --quiet \
   || { echo "story trips sizing gates — split or justify"; exit 1; }
 ```
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).
