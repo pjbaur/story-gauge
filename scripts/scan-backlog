@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scan-backlog — risk dashboard across every story file in a directory (recursive).
-# Usage: scan-backlog [dir] [--config FILE]   (default dir: .)
+# Usage: scan-backlog [dir] [--format table|json] [--config FILE]   (default dir: .)
 set -euo pipefail
 
 # Resolve real script dir even when invoked through a symlink (install.sh links to PATH).
@@ -10,14 +10,27 @@ while [ -h "$SRC" ]; do
   [ "${SRC#/}" = "$SRC" ] && SRC="$D/$SRC"
 done
 HERE="$(cd -P "$(dirname "$SRC")" && pwd)"
-# shellcheck source=./sizer.sh
+# shellcheck source=./scripts/sizer.sh
 source "$HERE/sizer.sh"
 
-DIR="."
+usage() { echo "usage: scan-backlog [dir] [--format table|json] [--config FILE]" >&2; }
+
+DIR="."; FORMAT="table"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --config) shift; export STORY_SIZER_CONFIG="$1" ;;
-    -h|--help) echo "usage: scan-backlog [dir] [--config FILE]"; exit 0 ;;
+    --json) FORMAT="json" ;;
+    --format)
+      shift
+      [ $# -gt 0 ] || { usage; exit 2; }
+      FORMAT="$1"
+      case "$FORMAT" in table|json) ;; *) echo "unknown format: $FORMAT" >&2; exit 2 ;; esac
+      ;;
+    --config)
+      shift
+      [ $# -gt 0 ] || { usage; exit 2; }
+      export STORY_SIZER_CONFIG="$1"
+      ;;
+    -h|--help) usage; exit 0 ;;
     *) DIR="$1" ;;
   esac
   shift
@@ -26,19 +39,45 @@ done
 
 sizer_load_config
 
-printf '%-50s %4s %5s %4s %5s %5s  %s\n' "story" "ACs" "files" "SM~" "mark" "race" "risk"
-printf '%s\n' "--------------------------------------------------------------------------------------"
+if [ "$FORMAT" = "table" ]; then
+  printf '%-50s %4s %5s %4s %5s %5s  %s\n' "story" "ACs" "files" "SM~" "mark" "race" "risk"
+  printf '%s\n' "--------------------------------------------------------------------------------------"
+else
+  printf '{"stories":['
+fi
 
-OK=0; WATCH=0; HIGH=0
+OK=0; SPLIT=0; HIGH=0; FIRST_JSON=1
 while IFS= read -r f; do
   sizer_is_story "$f" || continue
   sizer_score_file "$f"
   risk=$(sizer_risk "$TRIP"); tag="$risk"; [ "$TRIP" -ge 2 ] && tag="HIGH*"
-  case "$risk" in OK) OK=$((OK+1));; WATCH) WATCH=$((WATCH+1));; HIGH) HIGH=$((HIGH+1));; esac
+  case "$risk" in OK) OK=$((OK+1));; SPLIT) SPLIT=$((SPLIT+1));; HIGH) HIGH=$((HIGH+1));; esac
   name="$(basename "${f%.md}")"
-  printf '%-50.50s %4s %5s %4s %5s %5s  %s\n' "$name" "$ACS" "$FILES" "$SM" "$MARK" "$RACE" "$tag"
+  if [ "$FORMAT" = "table" ]; then
+    printf '%-50.50s %4s %5s %4s %5s %5s  %s\n' "$name" "$ACS" "$FILES" "$SM" "$MARK" "$RACE" "$tag"
+  else
+    [ "$FIRST_JSON" -eq 0 ] && printf ','
+    FIRST_JSON=0
+    printf '{'
+    printf '"file":'; sizer_json_string "$f"; printf ','
+    printf '"name":'; sizer_json_string "$name"; printf ','
+    printf '"acs":%s,' "$ACS"
+    printf '"files":%s,' "$FILES"
+    printf '"state_machine_hits":%s,' "$SM"
+    printf '"state_machine_terms":'; printf '%s\n' "$SM_TERMS" | sizer_json_array_lines; printf ','
+    printf '"markers":%s,' "$MARK"
+    printf '"race":%s,' "$RACE"
+    printf '"dev_notes_lines":%s,' "$DEVLINES"
+    printf '"gates_tripped":%s,' "$TRIP"
+    printf '"risk":'; sizer_json_string "$risk"
+    printf '}'
+  fi
 done < <(find "$DIR" -type f -name '*.md' | sort)
 
-printf '%s\n' "--------------------------------------------------------------------------------------"
-printf 'totals: %s OK  |  %s WATCH  |  %s HIGH   (* = recommend split)\n' "$OK" "$WATCH" "$HIGH"
-echo "SM~ = keyword estimate, verify by hand. Gates: ACs<=$MAX_ACS files<=$MAX_FILES SM<=$MAX_SM mark<=$MAX_MARKERS race<=$MAX_RACE"
+if [ "$FORMAT" = "table" ]; then
+  printf '%s\n' "--------------------------------------------------------------------------------------"
+  printf 'totals: %s OK  |  %s SPLIT  |  %s HIGH   (* = recommend split)\n' "$OK" "$SPLIT" "$HIGH"
+  echo "SM~ = keyword hit count, verify by hand. Gates: ACs<=$MAX_ACS files<=$MAX_FILES SM<=$MAX_SM mark<=$MAX_MARKERS race<=$MAX_RACE"
+else
+  printf '],"totals":{"ok":%s,"split":%s,"high":%s}}\n' "$OK" "$SPLIT" "$HIGH"
+fi

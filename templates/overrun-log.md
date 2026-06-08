@@ -10,7 +10,8 @@ sizing gates empirically toward the **smallest story that still overran**, inste
 |-------|-----|-------|----------------|---------|-----------------|---------|
 | _example_ | 10 | 4 | 2 | 13 | 203 | overran; shipped unmet ACs → re-work |
 
-> Populate rows fast: `score-story <story.md>` or `scan-backlog <dir>`.
+> Populate rows fast: `score-story <story.md>` or `scan-backlog <dir>`. `state machines` starts
+> from the `SM~` keyword hit count; verify by hand before calibrating.
 
 ## Retro prompts (run when adding a row)
 
@@ -24,7 +25,7 @@ sizing gates empirically toward the **smallest story that still overran**, inste
 
 Mirror of `config/default.conf` — update both together when a retro moves a number.
 
-- ACs ≤ 6 · files ≤ 3 · state machines ≤ 1 · markers ≤ 3 · race/lifecycle prose = 0
+- ACs ≤ 6 · files ≤ 3 · state-machine hits ≤ 1 · markers ≤ 3 · race/lifecycle prose = 0
 - dev-notes > 120 lines = soft warn
 
 _Last calibration: <date> (<reason>)._

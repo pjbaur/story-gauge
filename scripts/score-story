@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # score-story — score one markdown story/spec against the sizing gates.
-# Usage: score-story <story.md> [--quiet] [--config FILE]
+# Usage: score-story <story.md> [--quiet] [--format table|json] [--config FILE]
 # Exit:  0 = READY (no gate tripped) | 1 = SPLIT (>=1 tripped) | 2 = usage error
 set -euo pipefail
 
@@ -11,43 +11,82 @@ while [ -h "$SRC" ]; do
   [ "${SRC#/}" = "$SRC" ] && SRC="$D/$SRC"
 done
 HERE="$(cd -P "$(dirname "$SRC")" && pwd)"
-# shellcheck source=./sizer.sh
+# shellcheck source=./scripts/sizer.sh
 source "$HERE/sizer.sh"
 
-QUIET=0; FILE=""
+usage() { echo "usage: score-story <story.md> [--quiet] [--format table|json] [--config FILE]" >&2; }
+
+QUIET=0; FORMAT="table"; FILE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --quiet) QUIET=1 ;;
-    --config) shift; export STORY_SIZER_CONFIG="$1" ;;
+    --json) FORMAT="json" ;;
+    --format)
+      shift
+      [ $# -gt 0 ] || { usage; exit 2; }
+      FORMAT="$1"
+      case "$FORMAT" in table|json) ;; *) echo "unknown format: $FORMAT" >&2; exit 2 ;; esac
+      ;;
+    --config)
+      shift
+      [ $# -gt 0 ] || { usage; exit 2; }
+      export STORY_SIZER_CONFIG="$1"
+      ;;
     -h|--help) sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) FILE="$1" ;;
+    *)
+      [ -z "$FILE" ] || { echo "unexpected arg: $1" >&2; exit 2; }
+      FILE="$1"
+      ;;
   esac
   shift
 done
-[ -z "$FILE" ] && { echo "usage: score-story <story.md> [--quiet] [--config FILE]" >&2; exit 2; }
+[ -z "$FILE" ] && { usage; exit 2; }
 [ -f "$FILE" ] || { echo "no such file: $FILE" >&2; exit 2; }
 
 sizer_load_config
-sizer_score_file "$FILE"
+sizer_score_file "$FILE" || { echo "missing required section: $(sizer_hashes "$AC_LEVEL") $AC_HEADING" >&2; exit 2; }
 
 if [ "$QUIET" -eq 0 ]; then
-  row() { # label value max
-    local st="OK  "; [ "$2" -gt "$3" ] && st="FAIL"
-    printf '  %-24s %4s   %s (max %s)\n' "$1" "$2" "$st" "$3"
-  }
-  echo "STORY SIZING SCORE — $(basename "$FILE")"
-  echo "----------------------------------------------"
-  row "1 ACs"             "$ACS"  "$MAX_ACS"
-  row "2 files (logic)"   "$FILES" "$MAX_FILES"
-  row "3 state machines~" "$SM"   "$MAX_SM"
-  row "4 markers"         "$MARK" "$MAX_MARKERS"
-  row "5 race/lifecycle"  "$RACE" "$MAX_RACE"
-  printf '  %-24s %4s   (warn >%s)\n' "  dev-notes lines" "$DEVLINES" "$WARN_DEVNOTES_LINES"
-  echo "----------------------------------------------"
-  case "$TRIP" in
-    0) echo "VERDICT: READY   (0 gates tripped)" ;;
-    1) echo "VERDICT: REVIEW  (1 gate tripped — WATCH; skim the structural tells)" ;;
-    *) echo "VERDICT: SPLIT   ($TRIP gates tripped — HIGH)" ;;
+  case "$FORMAT" in
+    table)
+      row() { # label value max
+        local st="OK  "; [ "$2" -gt "$3" ] && st="FAIL"
+        printf '  %-24s %4s   %s (max %s)\n' "$1" "$2" "$st" "$3"
+      }
+      echo "STORY SIZING SCORE - $(basename "$FILE")"
+      echo "----------------------------------------------"
+      row "1 ACs"             "$ACS"  "$MAX_ACS"
+      row "2 files (logic)"   "$FILES" "$MAX_FILES"
+      row "3 state-machine hits~" "$SM" "$MAX_SM"
+      row "4 markers"         "$MARK" "$MAX_MARKERS"
+      row "5 race/lifecycle"  "$RACE" "$MAX_RACE"
+      printf '  %-24s %4s   (warn >%s)\n' "  dev-notes lines" "$DEVLINES" "$WARN_DEVNOTES_LINES"
+      echo "----------------------------------------------"
+      case "$TRIP" in
+        0) echo "VERDICT: READY   (0 gates tripped)" ;;
+        1) echo "VERDICT: SPLIT   (1 gate tripped)" ;;
+        *) echo "VERDICT: SPLIT   ($TRIP gates tripped - HIGH)" ;;
+      esac
+      ;;
+    json)
+      printf '{'
+      printf '"file":'; sizer_json_string "$FILE"; printf ','
+      printf '"acs":%s,' "$ACS"
+      printf '"files":%s,' "$FILES"
+      printf '"state_machine_hits":%s,' "$SM"
+      printf '"state_machine_terms":'; printf '%s\n' "$SM_TERMS" | sizer_json_array_lines; printf ','
+      printf '"markers":%s,' "$MARK"
+      printf '"race":%s,' "$RACE"
+      printf '"dev_notes_lines":%s,' "$DEVLINES"
+      printf '"gates_tripped":%s,' "$TRIP"
+      printf '"verdict":'
+      if [ "$TRIP" -eq 0 ]; then
+        sizer_json_string "READY"
+      else
+        sizer_json_string "SPLIT"
+      fi
+      printf '}\n'
+      ;;
   esac
 fi
 

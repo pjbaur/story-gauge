@@ -7,7 +7,7 @@ description: Score a markdown user-story / spec / ticket for oversize risk befor
 
 Catch stories too large for an implementer (human or LLM) to finish without running out of
 context — the failure mode where a story ships with unmet acceptance criteria. Gates a story on
-five proxies: AC count, changed-file count, distinct state machines, danger-marker density, and
+five proxies: AC count, changed-file count, state-machine keyword hits, danger-marker density, and
 race/lifecycle prose. Any one over threshold ⇒ recommend SPLIT.
 
 ## When to use
@@ -34,20 +34,21 @@ Scan a backlog directory (recursive):
 scripts/scan-backlog path/to/stories/
 ```
 
-Per-repo overrides (headings, file-path regex, keyword lists, thresholds): drop a
+Per-repo overrides (heading levels/text, file-path regex, keyword lists, thresholds): drop a
 `.story-sizer.conf` in the working dir, or pass `--config FILE`. Only override the keys you change;
-see `config/default.conf` for every key.
+see `config/default.conf` for every key. Config files accept whitelisted `KEY=value` settings only;
+they are parsed, not shell-sourced.
 
 ## Interpreting output
 
-Five gates (defaults): `ACs ≤ 6 · files ≤ 3 · state-machines ≤ 1 · markers ≤ 3 · race-prose = 0`.
+Five gates (defaults): `ACs ≤ 6 · files ≤ 3 · state-machine hits ≤ 1 · markers ≤ 3 · race-prose = 0`.
 
 - **READY** — no gate tripped. Fine to implement.
-- **WATCH** — exactly one tripped. Skim the structural tells in `references/story-sizing-rubric.md`.
-- **SPLIT / HIGH** — two or more tripped. Recommend slicing.
+- **SPLIT** — one or more gates tripped. Recommend slicing or justify override.
+- **HIGH** — two or more gates tripped in backlog scans. Prioritize these splits first.
 
 **Critical caveats to relay to the user, not hide:**
-- `SM~` (state machines) is a keyword estimate — **verify by hand** before asserting it.
+- `SM~` (state-machine hits) is a keyword estimate — **verify by hand** before asserting it.
 - The proxies measure prose, not ground truth. If a whole backlog flags HIGH, the thresholds
   likely need calibration to that team's house style — say so; don't present it as "everything is broken."
 - Treat the dashboard as a **ranking**: the all-gates outlier is the real signal regardless of

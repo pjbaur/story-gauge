@@ -15,7 +15,7 @@ ACs and burns a review cycle.
 |---|------|---------|------------------|
 | 1 | Acceptance criteria | **≤ 6** | numbered items under the AC heading |
 | 2 | Files with logic changes | **≤ 3** | distinct paths in the File List (test siblings collapsed) |
-| 3 | Distinct state machines / control loops | **≤ 1** | keyword proxy — *verify by hand* |
+| 3 | State-machine / control-loop hits | **≤ 1** | keyword proxy — *verify by hand* |
 | 4 | `CRITICAL` / `Do NOT` / `IMPORTANT`… markers | **≤ 3** | marker hits in Dev Notes + ACs |
 | 5 | Race / ordering / lifecycle invariant prose | **0** | microtask/EPIPE/"stay alive"/"deferred until"… |
 
@@ -28,6 +28,7 @@ All thresholds are config (`config/default.conf` or a per-project `.story-sizer.
 - **Marker density** = hidden coupling the author felt but couldn't remove.
 - **Prose explaining a race** = temporal coupling that detonates an agent's context.
 - **Two state machines sharing mutable state** (e.g. two retry loops sharing one budget) = multiplicative, not additive.
+- **Repeated control-loop terms** may be one repeated concern or several loops; verify `SM~` by hand.
 - **"Wire N prior stories together"** = highest-risk integration story. Wire ONE consumer per story.
 - **"Reconciliation" section** (two overlapping mechanisms) = design debt being resolved mid-build.
 - **Long "Do NOT touch" list** = story sits in a tightly coupled blast radius → refactor-first.

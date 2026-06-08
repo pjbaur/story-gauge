@@ -7,12 +7,12 @@ criteria** and burns a review cycle.
 Five gates, any one trips ⇒ recommend SPLIT:
 
 ```
-ACs ≤ 6 · files ≤ 3 · state-machines ≤ 1 · markers ≤ 3 · race/lifecycle prose = 0
+ACs ≤ 6 · files ≤ 3 · state-machine hits ≤ 1 · markers ≤ 3 · race/lifecycle prose = 0
 ```
 
 Dependency-free bash (`bash` + `awk`/`grep`/`sed`). Works on any markdown story with an
-`## Acceptance Criteria` section. Everything — headings, file-path regex, keyword lists,
-thresholds — is configurable per repo.
+`## Acceptance Criteria` section. Everything — heading levels/text, file-path regex, keyword
+lists, thresholds — is configurable per repo.
 
 ## One skill, three harnesses
 
@@ -47,9 +47,11 @@ Inside an agent, just ask ("size this story", "scan the backlog"). Direct CLI us
 `--bin`, or via `scripts/`):
 
 ```sh
-score-story path/to/story.md            # table + verdict; exit 0=READY 1=SPLIT
-score-story path/to/story.md --quiet    # exit code only (for CI / pre-commit)
-scan-backlog path/to/stories/           # risk dashboard across a folder (recursive)
+score-story path/to/story.md                  # table + verdict; exit 0=READY 1=SPLIT
+score-story path/to/story.md --quiet          # exit code only (for CI / pre-commit)
+score-story path/to/story.md --format json    # machine-readable result
+scan-backlog path/to/stories/                 # risk dashboard across a folder (recursive)
+scan-backlog path/to/stories/ --format json   # machine-readable dashboard
 ```
 
 Example:
@@ -59,7 +61,7 @@ STORY SIZING SCORE — 6-4-red-ci-rolls-back-phase-claim.md
 ----------------------------------------------
   1 ACs                      10   FAIL (max 6)
   2 files (logic)             4   FAIL (max 3)
-  3 state machines~           3   FAIL (max 1)
+  3 state-machine hits~       3   FAIL (max 1)
   4 markers                  13   FAIL (max 3)
   5 race/lifecycle            2   FAIL (max 0)
     dev-notes lines         203   (warn >120)
@@ -73,10 +75,13 @@ Drop a `.story-sizer.conf` in the repo (or pass `--config FILE`). Override only 
 change; all keys live in [`config/default.conf`](config/default.conf). Common ones:
 
 ```sh
+AC_LEVEL=3                                                   # ### Acceptance Criteria
 FILE_PATH_RE='(src|lib|app)/[A-Za-z0-9_./-]+\.(py|go|rs)'   # your stack
 MAX_ACS=8                                                    # your house baseline
 AC_ITEM_RE='^[-*][[:space:]]'                                # bullet ACs instead of numbered
 ```
+
+Config files accept whitelisted `KEY=value` settings only; they are parsed, not shell-sourced.
 
 ## Layout
 
@@ -98,7 +103,7 @@ the thresholds) or stories really are over-scoped (gates are right). Use
 [`templates/overrun-log.md`](templates/overrun-log.md): log real overruns, tighten thresholds
 toward the smallest story that still overran. Treat the dashboard as a **ranking** first — the
 all-gates outlier is the signal regardless of absolute cutoffs. And always hand-verify the
-state-machine count (`SM~`).
+state-machine hit count (`SM~`).
 
 ## Pre-commit / CI hook
 
